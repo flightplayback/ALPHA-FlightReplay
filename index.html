@@ -982,7 +982,12 @@
         <div class="info-body">
           <div class="control-group primary">
             <div class="playback-controls">
-              <button id="playPauseBtn">▶</button>
+              <button id="playPauseBtn">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor"
+                  stroke="none">
+                  <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                </svg>
+              </button>
             </div>
             <div class="progress-container">
               <input type="range" id="progressBar" value="0" min="0" step="1" disabled>
@@ -1331,7 +1336,20 @@
     }
 
     function updatePlayPauseButton() {
-      playPauseBtn.innerHTML = isPlaying ? '⏸' : '▶';
+      if (isPlaying) {
+        playPauseBtn.innerHTML = `
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+            <rect x="6" y="4" width="4" height="16"></rect>
+            <rect x="14" y="4" width="4" height="16"></rect>
+          </svg>
+        `;
+      } else {
+        playPauseBtn.innerHTML = `
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+            <polygon points="5 3 19 12 5 21 5 3"></polygon>
+          </svg>
+        `;
+      }
     }
 
     function playFlight() {
