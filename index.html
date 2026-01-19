@@ -619,28 +619,6 @@
         height: 200px;
       }
     }
-
-    /* Responsive BMC Popup Fix */
-    /* Apply strict containment ONLY for Landscape or Larger Screens (Desktop/Tablet) */
-    /* Mobile Portrait will use the standard "full screen" behavior */
-    @media (min-width: 768px),
-    (orientation: landscape) {
-      #bmc-iframe {
-        position: fixed !important;
-        top: 50% !important;
-        left: 50% !important;
-        transform: translate(-50%, -50%) !important;
-        width: 420px !important;
-        height: 720px !important;
-        max-width: 95vw !important;
-        max-height: 95vh !important;
-        z-index: 999999999 !important;
-        border: none !important;
-        border-radius: 16px !important;
-        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5) !important;
-        background: white !important;
-      }
-    }
   </style>
 
   <style>
@@ -1757,6 +1735,7 @@
       }, 3000);
 
       // Link custom button to official BMC widget
+      const tipBtn = document.getElementById('tipBtn');
       if (tipBtn) {
         tipBtn.addEventListener('click', () => {
           const bmcWidgetBtn = document.getElementById('bmc-wbtn');
@@ -1765,33 +1744,6 @@
           }
         });
       }
-
-      // Polling to fix "ghost" blocking issue and interaction
-      // We use setInterval because MutationObserver misses changes during CSS transitions
-      // (e.g. opacity animating from 0 to 1 doesn't trigger attribute changes)
-      setInterval(() => {
-        const iframe = document.getElementById('bmc-iframe');
-        if (iframe) {
-          const style = window.getComputedStyle(iframe);
-          const opacity = parseFloat(style.opacity);
-
-          // Check if effectively invisible
-          // We use < 0.1 to catch any transition states or almost-invisible states
-          const isHidden = style.display === 'none' || style.visibility === 'hidden' || opacity < 0.1;
-
-          if (isHidden) {
-            // If hidden, ensure it doesn't block clicks
-            if (iframe.style.pointerEvents !== 'none') {
-              iframe.style.setProperty('pointer-events', 'none', 'important');
-            }
-          } else {
-            // If visible, ensure it can be clicked
-            if (iframe.style.pointerEvents !== 'auto') {
-              iframe.style.setProperty('pointer-events', 'auto', 'important');
-            }
-          }
-        }
-      }, 100);
     });
   </script>
 </body>
