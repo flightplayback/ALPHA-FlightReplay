@@ -861,7 +861,7 @@
       border: none !important;
       border-radius: 0 !important;
       /* Reset radius */
-      width: 44px !important;
+      width: 42px !important;
       height: 44px !important;
       line-height: 44px !important;
       font-size: 22px !important;
@@ -924,7 +924,13 @@
 <body>
   <input type="file" id="multiCsvFiles" accept=".csv" multiple onchange="handleMultiFiles()" />
   <label id="multi_file_button" for="multiCsvFiles">Select CSV file(s)</label>
-  <button id="screenshotBtn" title="Take Screenshot">📸</button>
+  <button id="screenshotBtn" title="Take Screenshot">
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
+      <circle cx="12" cy="13" r="4"></circle>
+    </svg>
+  </button>
   <button id="tipBtn" title="Support me on Buy me a coffee!">
     <span class="btn-text">Leave a tip</span>
     <img src="https://cdn.buymeacoffee.com/buttons/bmc-new-btn-logo.svg" alt="Buy Me a Coffee"
