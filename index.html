@@ -948,8 +948,8 @@
 </head>
 
 <body>
-  <input type="file" id="multiCsvFiles" accept=".csv" multiple onchange="handleMultiFiles()" />
-  <label id="multi_file_button" for="multiCsvFiles">Select CSV file(s)</label>
+  <input type="file" id="multiCsvFiles" accept=".csv, .kml" multiple onchange="handleMultiFiles()" />
+  <label id="multi_file_button" for="multiCsvFiles">Select Flight file(s)</label>
   <button id="screenshotBtn" title="Take Screenshot">
     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
       stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1187,9 +1187,17 @@
     }
 
     function formatUTCTime(utcTimestamp) {
-      const [datePart, timePart] = utcTimestamp.replace('Z', '').split('T');
-      const [year, month, day] = datePart.split('-');
-      const [hours, minutes, seconds] = timePart.split(':');
+      if (!utcTimestamp) return 'N/A';
+      const date = new Date(utcTimestamp);
+      if (isNaN(date.getTime())) return utcTimestamp;
+
+      const day = String(date.getUTCDate()).padStart(2, '0');
+      const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+      const year = date.getUTCFullYear();
+      const hours = String(date.getUTCHours()).padStart(2, '0');
+      const minutes = String(date.getUTCMinutes()).padStart(2, '0');
+      const seconds = String(date.getUTCSeconds()).padStart(2, '0');
+
       return `${day}/${month}/${year} ${hours}:${minutes}:${seconds}`;
     }
 
@@ -1405,9 +1413,16 @@
       }
     }
 
+    let activePointIndex = -1;
+
     function updateDisplay(index) {
       const point = flightPathPoints[index];
       if (!point) return;
+
+      activePointIndex = index;
+      if (chartInstance) {
+        chartInstance.draw();
+      }
 
       heureEl.textContent = point.time;
       document.getElementById("UTCTime").textContent = point.utcTime;
@@ -1417,18 +1432,22 @@
     }
 
     function handleSingleFile() {
-      const file = fileInput.files[0];
+      // This function might not be used if the input assumes multi-file, 
+      // but if there were a single file input elsewhere, we'd update it too.
+      // The current UI uses #multiCsvFiles for everything.
+      // But preserving this just in case logic is shared.
+      const file = multiFileInput.files[0];
       if (file) {
-        // Clear previous flights
         clearAllFlights();
         flightSelector.style.display = 'none';
-
-        // Hide toggle button
         const flightToggleBtn = document.getElementById('flightSelectorToggle');
         if (flightToggleBtn) flightToggleBtn.style.display = 'none';
 
-        // Process the single file
-        processCSVFile(file, 0, true);
+        if (file.name.toLowerCase().endsWith('.kml')) {
+          processKMLFile(file, 0, true);
+        } else {
+          processCSVFile(file, 0, true);
+        }
       }
     }
 
@@ -1437,23 +1456,38 @@
       const flightToggleBtn = document.getElementById('flightSelectorToggle');
 
       if (files.length > 0) {
-        // Clear previous flights
         clearAllFlights();
         flightSelector.innerHTML = '';
 
+        const isSingleFile = files.length === 1;
+
         for (let i = 0; i < files.length; i++) {
-          processCSVFile(files[i], i, false);
+          const file = files[i];
+          if (file.name.toLowerCase().endsWith('.kml')) {
+            processKMLFile(file, i, isSingleFile);
+          } else {
+            processCSVFile(file, i, isSingleFile);
+          }
         }
 
-        // Only show toggle button if more than 1 file
         if (flightToggleBtn) {
-          flightToggleBtn.style.display = files.length > 1 ? 'flex' : 'none';
+          flightToggleBtn.style.display = !isSingleFile ? 'flex' : 'none';
+        }
+        flightSelectorContainer.style.display = !isSingleFile ? 'flex' : 'none';
+
+        // Ensure menu starts collapsed (hidden) when loading new files
+        if (!isSingleFile) {
+          flightSelectorContainer.classList.add('collapsed');
         }
 
-        // Show container (if needed for context, but button controls menu visibility)
-        flightSelectorContainer.style.display = 'flex';
+        // Show graph handle
+        const toggleGraph = document.getElementById('toggleGraphBtn');
+        if (toggleGraph) toggleGraph.style.display = 'flex';
+
       } else {
         if (flightToggleBtn) flightToggleBtn.style.display = 'none';
+        const toggleGraph = document.getElementById('toggleGraphBtn');
+        if (toggleGraph) toggleGraph.style.display = 'none';
       }
     }
 
@@ -1480,16 +1514,146 @@
       if (toggleBtn) toggleBtn.style.display = 'none';
     }
 
+    function processKMLFile(file, index, isSingleFile) {
+      const reader = new FileReader();
+      reader.onload = function (e) {
+        const parser = new DOMParser();
+        const xmlDoc = parser.parseFromString(e.target.result, "text/xml");
+        const flightPoints = [];
+        const flightSegments = [];
+
+        // Extract Flight Name (try Document name, or Filename)
+        let flightName = file.name.replace('.kml', '');
+        const docName = xmlDoc.querySelector('Document > name');
+        if (docName && docName.textContent) {
+          flightName = docName.textContent;
+        }
+
+        // Find all Placemarks that look like track points (have TimeStamp)
+        const placemarks = xmlDoc.querySelectorAll('Placemark');
+
+        placemarks.forEach(pm => {
+          const timestampNode = pm.querySelector('TimeStamp > when');
+          const pointNode = pm.querySelector('Point > coordinates');
+          const descriptionNode = pm.querySelector('description');
+
+          if (timestampNode && pointNode) {
+            const coords = pointNode.textContent.trim().split(',');
+            const lng = parseFloat(coords[0]);
+            const lat = parseFloat(coords[1]);
+            const alt = parseFloat(coords[2]) || 0; // standard KML alt is meters usually, but let's check
+            // Wait, the KML example description says "Altitude: 0 ft". 
+            // The <coordinates> usually have altitude in meters in standard KML, BUT
+            // let's rely on the Description HTML if available for more precise/data-logger specific values (Speed/Heading).
+            // Actually, let's parse the description for consistent data matching the CSV columns.
+
+            let altitudeFeet = 0;
+            let speedKt = 0;
+            let headingDeg = 0;
+
+            if (descriptionNode) {
+              const htmlContent = descriptionNode.textContent;
+              const parser = new DOMParser();
+              const htmlDoc = parser.parseFromString(htmlContent, 'text/html');
+
+              // Helper to extracting numeric value from sibling span
+              const extractValue = (label) => {
+                const bTags = htmlDoc.getElementsByTagName('b');
+                for (let i = 0; i < bTags.length; i++) {
+                  if (bTags[i].textContent.includes(label)) {
+                    let valueContainer = null;
+                    // Check 1: <description>...<span><b>Label:</b></span> <span>Value</span>...</description>
+                    // bTag -> parent(span) -> nextElementSibling(span)
+                    if (bTags[i].parentElement && bTags[i].parentElement.tagName.toLowerCase() === 'span') {
+                      valueContainer = bTags[i].parentElement.nextElementSibling;
+                    }
+                    // Check 2: Direct sibling? <b>Label:</b> <span>Value</span>
+                    if (!valueContainer) {
+                      valueContainer = bTags[i].nextElementSibling;
+                    }
+
+                    if (valueContainer) {
+                      let text = valueContainer.textContent.trim();
+
+                      // Handle range "24,925 ft - 23,325 ft" -> take the right side
+                      if (text.includes('-')) {
+                        const parts = text.split('-');
+                        text = parts[parts.length - 1].trim();
+                      }
+
+                      // Remove commas "23,325" -> "23325"
+                      text = text.replace(/,/g, '');
+
+                      const match = text.match(/(\d+)/);
+                      if (match) return parseInt(match[1]);
+                    }
+                  }
+                }
+
+                // Fallback: Regex on full text
+                const cleanText = htmlDoc.body.textContent || "";
+                const backupRegex = new RegExp(label + "\\s*[:]?\\s*(\\d+)");
+                const match = cleanText.match(backupRegex);
+                if (match) return parseInt(match[1]);
+
+                return null;
+              };
+
+              const altConf = extractValue('Altitude');
+              if (altConf !== null) altitudeFeet = altConf;
+
+              const spdConf = extractValue('Speed');
+              if (spdConf !== null) speedKt = spdConf;
+
+              const hdgConf = extractValue('Heading');
+              if (hdgConf !== null) headingDeg = hdgConf;
+
+            } else {
+              // Fallback if no description (standard KML)
+              // If standard KML, coords[2] is meters. 1m = 3.28084ft
+              altitudeFeet = (parseFloat(coords[2]) || 0) * 3.28084;
+            }
+
+            // Check for Style Heading fallback
+            if (headingDeg === 0) {
+              const iconHeading = pm.querySelector('Style > IconStyle > heading');
+              if (iconHeading) headingDeg = parseInt(iconHeading.textContent);
+            }
+
+            if (!isNaN(lat) && !isNaN(lng)) {
+              const rawTime = timestampNode.textContent;
+              // Calculate unix timestamp for graph
+              const unixTime = new Date(rawTime).getTime() / 1000;
+
+              flightPoints.push({
+                lat: lat,
+                lng: lng,
+                altitudeFeet: altitudeFeet,
+                speed: speedKt,
+                direction: headingDeg,
+                rawUnix: unixTime,
+                time: formatTime(rawTime), // formatTime handles 'Invalid Date' checks internally
+                utcTime: formatUTCTime(rawTime) // reusing existing if format matches
+              });
+            }
+          }
+        });
+
+        if (flightPoints.length < 2) return;
+
+        finishProcessingFlight(flightPoints, flightName, index, isSingleFile, results = { data: flightPoints }); // Mock results for chart
+      };
+      reader.readAsText(file);
+    }
+
     function processCSVFile(file, index, isSingleFile) {
       Papa.parse(file, {
         header: true,
         complete: function (results) {
           const data = results.data;
           const flightPoints = [];
-          const flightSegments = [];
+          // const flightSegments = []; // Unused variable
           let flightName = file.name.replace('.csv', '');
-          const toggleBtn = document.getElementById('toggleGraphBtn');
-          toggleBtn.style.display = 'flex'; // Use flex to center content
 
           if (results.meta.fields && results.meta.fields.length >= 3) {
             const c2Value = results.data[0] ? results.data[0][results.meta.fields[2]] : '';
@@ -1518,27 +1682,35 @@
 
           if (flightPoints.length < 2) return;
 
-          // Create altitude-based segments
-          const altitudeSegments = [];
-          for (let i = 0; i < flightPoints.length - 1; i++) {
-            const p1 = flightPoints[i];
-            const p2 = flightPoints[i + 1];
-            const avgAltFeet = (p1.altitudeFeet + p2.altitudeFeet) / 2;
-            const color = getColorFromAltitude(avgAltFeet);
+          finishProcessingFlight(flightPoints, flightName, index, isSingleFile, results);
+        }
+      });
+    }
 
-            const segment = L.polyline([[p1.lat, p1.lng], [p2.lat, p2.lng]], {
-              color: color,
-              weight: getTrackWeight()
-            }).addTo(map);
+    function finishProcessingFlight(flightPoints, flightName, index, isSingleFile, originalDataWrapper) {
+      // Shared Logic between CSV and KML
 
-            altitudeSegments.push(segment);
+      // Create altitude-based segments
+      const altitudeSegments = [];
+      for (let i = 0; i < flightPoints.length - 1; i++) {
+        const p1 = flightPoints[i];
+        const p2 = flightPoints[i + 1];
+        const avgAltFeet = (p1.altitudeFeet + p2.altitudeFeet) / 2;
+        const color = getColorFromAltitude(avgAltFeet);
 
-            segment.on('mousemove', (e) => {
-              if (currentTooltip) {
-                map.removeLayer(currentTooltip);
-              }
+        const segment = L.polyline([[p1.lat, p1.lng], [p2.lat, p2.lng]], {
+          color: color,
+          weight: getTrackWeight()
+        }).addTo(map);
 
-              const tooltipContent = `
+        altitudeSegments.push(segment);
+
+        segment.on('mousemove', (e) => {
+          if (currentTooltip) {
+            map.removeLayer(currentTooltip);
+          }
+
+          const tooltipContent = `
                 <div class="tooltip-content">
                   <strong>LOCAL TIME: </strong> ${p1.time}<br/>
                   <strong>UTC TIME: </strong> ${p1.utcTime}<br/>
@@ -1550,92 +1722,119 @@
                 </div>
               `;
 
-              currentTooltip = L.tooltip({
-                permanent: false,
-                direction: 'top',
-                className: 'tooltip-content'
-              })
-                .setLatLng(e.latlng)
-                .setContent(tooltipContent)
-                .addTo(map);
-            });
-
-            segment.on('mouseout', () => {
-              if (currentTooltip) {
-                map.removeLayer(currentTooltip);
-                currentTooltip = null;
-              }
-            });
-          }
-
-          // Create start and end markers (visible by default)
-          const start = flightPoints[0];
-          const end = flightPoints[flightPoints.length - 1];
-
-          const startMarker = L.marker([start.lat, start.lng]).addTo(map);
-          const endMarker = L.marker([end.lat, end.lng]).addTo(map);
-
-          // Bind tooltips that only show on hover
-          startMarker.bindTooltip(`${flightName} - Takeoff`, {
+          currentTooltip = L.tooltip({
             permanent: false,
             direction: 'top',
             className: 'tooltip-content'
-          });
+          })
+            .setLatLng(e.latlng)
+            .setContent(tooltipContent)
+            .addTo(map);
+        });
 
-          endMarker.bindTooltip(`${flightName} - Landing`, {
-            permanent: false,
-            direction: 'top',
-            className: 'tooltip-content'
-          });
-
-          // Show tooltip on mouseover
-          startMarker.on('mouseover', function () {
-            this.openTooltip();
-          });
-
-          // Hide tooltip on mouseout
-          startMarker.on('mouseout', function () {
-            this.closeTooltip();
-          });
-
-          // Show tooltip on mouseover
-          endMarker.on('mouseover', function () {
-            this.openTooltip();
-          });
-
-          // Hide tooltip on mouseout
-          endMarker.on('mouseout', function () {
-            this.closeTooltip();
-          });
-
-          // Store flight data
-          const flightData = {
-            name: flightName,
-            points: flightPoints,
-            path: null,
-            startMarker: startMarker,
-            endMarker: endMarker,
-            altitudeSegments: altitudeSegments,
-            data: data
-          };
-
-          allFlights.push(flightData);
-
-          // Add to flight selector if multiple files
-          if (!isSingleFile) {
-            const flightItem = document.createElement('div');
-            flightItem.className = 'flight-item';
-            flightItem.textContent = flightName;
-            flightItem.onclick = () => selectFlight(index);
-            flightSelector.appendChild(flightItem);
+        segment.on('mouseout', () => {
+          if (currentTooltip) {
+            map.removeLayer(currentTooltip);
+            currentTooltip = null;
           }
+        });
+      }
 
-          // If this is the first flight (or single file), select it by default
-          if (index === 0 || isSingleFile) {
-            selectFlight(index, isSingleFile);
-          }
-        }
+      // Create start and end markers (visible by default)
+      const start = flightPoints[0];
+      const end = flightPoints[flightPoints.length - 1];
+
+      const startMarker = L.marker([start.lat, start.lng]).addTo(map);
+      const endMarker = L.marker([end.lat, end.lng]).addTo(map);
+
+      // Bind tooltips that only show on hover
+      startMarker.bindTooltip(`${flightName} - Takeoff`, {
+        permanent: false,
+        direction: 'top',
+        className: 'tooltip-content'
       });
+
+      endMarker.bindTooltip(`${flightName} - Landing`, {
+        permanent: false,
+        direction: 'top',
+        className: 'tooltip-content'
+      });
+
+      // Show tooltip on mouseover
+      startMarker.on('mouseover', function () {
+        this.openTooltip();
+      });
+
+      // Hide tooltip on mouseout
+      startMarker.on('mouseout', function () {
+        this.closeTooltip();
+      });
+
+      // Show tooltip on mouseover
+      endMarker.on('mouseover', function () {
+        this.openTooltip();
+      });
+
+      // Hide tooltip on mouseout
+      endMarker.on('mouseout', function () {
+        this.closeTooltip();
+      });
+
+      // Store flight data
+      // For KML we don't have the original 'data' array structure from PapaParse, 
+      // allow originalDataWrapper to be just the points if needed, or normalize it? 
+      // The updateChart function expects 'data' to have .Timestamp, .Altitude, .Speed properties.
+      // We need to normalize data for the chart if it came from KML.
+
+      let chartDataSource = originalDataWrapper.data;
+
+      // If the source data doesn't look like CSV rows (no Timestamp property), we might need to map it back 
+      // or update updateChart to handle the 'flightPoints' structure which is cleaner.
+      // Ideally, we should refactor updateChart to use flightPoints!
+      // But to minimize risk, let's just make sure KML data is mapped to mimic the CSV row structure for the chart.
+      if ((!chartDataSource.length || !chartDataSource[0].Timestamp) && flightPoints.length > 0) {
+        // It's probably our KML points. Let's remap them to the expected format for updateChart
+        chartDataSource = flightPoints.map(p => ({
+          Timestamp: p.rawUnix, // Use the raw unix timestamp we stored
+          Altitude: p.altitudeFeet,
+          Speed: p.speed
+        }));
+      }
+
+      const flightData = {
+        name: flightName,
+        points: flightPoints,
+        path: null,
+        startMarker: startMarker,
+        endMarker: endMarker,
+        altitudeSegments: altitudeSegments,
+        data: chartDataSource
+      };
+
+      allFlights[index] = flightData;
+
+      // Add to flight selector if multiple files
+      if (!isSingleFile) {
+        flightSelector.innerHTML = '';
+        allFlights.forEach((flight, idx) => {
+          const flightItem = document.createElement('div');
+          flightItem.className = 'flight-item';
+          flightItem.textContent = flight.name;
+          flightItem.onclick = () => selectFlight(idx);
+
+          // Restore active state if needed (though usually handled by selectFlight)
+          if (idx === currentFlightIndex) {
+            flightItem.classList.add('active');
+          }
+
+          flightSelector.appendChild(flightItem);
+        });
+      }
+
+      // If this is the first flight (or single file), select it by default
+      if (index === 0 || isSingleFile) {
+        selectFlight(index, isSingleFile);
+      }
     }
 
     function selectFlight(index, isSingleFile = false) {
@@ -1815,6 +2014,30 @@
         chartInstance.destroy();
       }
 
+      const scrubberLine = {
+        id: 'scrubberLine',
+        afterDatasetsDraw(chart, args, options) {
+          if (activePointIndex === -1) return;
+
+          const { ctx, chartArea: { top, bottom }, scales: { x } } = chart;
+          const meta = chart.getDatasetMeta(0);
+
+          // Ensure we have data at this index
+          if (!meta.data[activePointIndex]) return;
+
+          const xPos = meta.data[activePointIndex].x;
+
+          ctx.save();
+          ctx.beginPath();
+          ctx.lineWidth = 1;
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+          ctx.moveTo(xPos, top);
+          ctx.lineTo(xPos, bottom);
+          ctx.stroke();
+          ctx.restore();
+        }
+      };
+
       chartInstance = new Chart(ctx, {
         type: 'line',
         data: {
@@ -1843,7 +2066,11 @@
             }
           ]
         },
+        plugins: [scrubberLine],
         options: {
+          animation: {
+            duration: 0 // Disable animation for responsive scrubbing
+          },
           responsive: true,
           maintainAspectRatio: false,
           interaction: {
