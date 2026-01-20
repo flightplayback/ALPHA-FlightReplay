@@ -1786,20 +1786,15 @@
       // The updateChart function expects 'data' to have .Timestamp, .Altitude, .Speed properties.
       // We need to normalize data for the chart if it came from KML.
 
-      let chartDataSource = originalDataWrapper.data;
 
-      // If the source data doesn't look like CSV rows (no Timestamp property), we might need to map it back 
-      // or update updateChart to handle the 'flightPoints' structure which is cleaner.
-      // Ideally, we should refactor updateChart to use flightPoints!
-      // But to minimize risk, let's just make sure KML data is mapped to mimic the CSV row structure for the chart.
-      if ((!chartDataSource.length || !chartDataSource[0].Timestamp) && flightPoints.length > 0) {
-        // It's probably our KML points. Let's remap them to the expected format for updateChart
-        chartDataSource = flightPoints.map(p => ({
-          Timestamp: p.rawUnix, // Use the raw unix timestamp we stored
-          Altitude: p.altitudeFeet,
-          Speed: p.speed
-        }));
-      }
+      // Store flight data
+      // Normalize data for chart to ensure 1:1 index mapping with flightPoints (slider)
+      // This guarantees the scrubber line stays in sync even if CSV had skipping rows
+      const chartDataSource = flightPoints.map(p => ({
+        Timestamp: p.rawUnix,
+        Altitude: p.altitudeFeet,
+        Speed: p.speed
+      }));
 
       const flightData = {
         name: flightName,
@@ -2029,7 +2024,7 @@
 
           ctx.save();
           ctx.beginPath();
-          ctx.lineWidth = 1;
+          ctx.lineWidth = 2; // Thicker line for better visibility
           ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
           ctx.moveTo(xPos, top);
           ctx.lineTo(xPos, bottom);
