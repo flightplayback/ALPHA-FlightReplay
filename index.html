@@ -314,6 +314,41 @@
       background-color: var(--button-hover);
     }
 
+    #followBtn {
+      position: absolute;
+      top: 320px;
+      right: 12px;
+      z-index: 1001;
+      padding: 10px;
+      background-color: var(--glass-bg);
+      color: var(--text-main);
+      /* Default color when active (white/black) */
+      border-radius: 50%;
+      border: 1px solid var(--glass-border);
+      cursor: pointer;
+      font-size: 1.2rem;
+      box-shadow: 0 4px 6px var(--shadow-color);
+      backdrop-filter: blur(5px);
+      -webkit-backdrop-filter: blur(5px);
+      transition: all 0.3s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 44px;
+      height: 44px;
+      display: none;
+    }
+
+    #followBtn.active {
+      background-color: var(--accent-color);
+      color: white;
+    }
+
+    #followBtn:hover {
+      transform: scale(1.1);
+      background-color: var(--button-hover);
+    }
+
     /* Hide Cesium's default UI elements */
     .cesium-viewer-bottom {
       display: none !important;
@@ -1300,6 +1335,15 @@
       <line x1="3" y1="18" x2="21" y2="18"></line>
     </svg>
   </button>
+  <button id="followBtn" title="Toggle Follow Mode" style="display: none;">
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="10" />
+      <line x1="12" y1="8" x2="12" y2="16" />
+      <line x1="8" y1="12" x2="16" y2="12" />
+    </svg>
+  </button>
+
   <!-- <button id="toggleMarkersBtn">VFR</button> -->
   <div class="infosbox collapsed">
     <button id="toggleGraphBtn" title="Slide to toggle graph">
@@ -1380,6 +1424,7 @@
     let cesiumPathEntity = null;
     let is3DMode = false;
     let cesiumInitialized = false;
+    const defaultViewFrom = new Cesium.Cartesian3(-80.0, 0.0, 0.0); // Directly Behind and above
 
     // Initialize Cesium viewer (lazy loading)
     async function initCesium() {
@@ -1643,7 +1688,7 @@
     }
 
     // Create 3D flight path in Cesium
-    function create3DFlightPath(flightData) {
+    async function create3DFlightPath(flightData) {
       if (!viewer || !flightData || flightData.length === 0) return;
 
       viewer.entities.removeAll();
@@ -1655,13 +1700,22 @@
       let processedData = flightData;
       if (flightData[0] && flightData[0].lat !== undefined) {
         // This is flight points format, convert it
-        processedData = flightData.map(point => ({
-          UTC: point.utcTime || new Date(point.rawUnix * 1000).toISOString(),
-          Position: `${point.lat},${point.lng}`,
-          Altitude: point.altitudeFeet || 0,
-          Direction: point.direction || 0,
-          Speed: point.speed || 0
-        }));
+        processedData = flightData.map(point => {
+          let isoTime;
+          if (point.rawUnix) {
+            isoTime = new Date(point.rawUnix * 1000).toISOString();
+          } else {
+            // Fallback to trying to parse the string
+            isoTime = new Date(point.utcTime).toISOString();
+          }
+          return {
+            UTC: isoTime,
+            Position: `${point.lat},${point.lng}`,
+            Altitude: point.altitudeFeet || 0,
+            Direction: point.direction || 0,
+            Speed: point.speed || 0
+          };
+        });
       }
 
       const startTime = Cesium.JulianDate.fromDate(new Date(processedData[0].UTC));
@@ -1673,22 +1727,130 @@
       viewer.clock.clockRange = Cesium.ClockRange.CLAMPED;
       viewer.clock.multiplier = getSpeedMultiplier();
 
+      // --- Terrain Clamping Logic ---
+      // We asynchronously sample terrain height to ensure the aircraft doesn't go underground.
+      // Optimization: Only sample if altitude is low (e.g., < 3000ft) to save time/bandwidth.
+
+      const terrainSamplePositions = [];
+      const terrainSampleIndices = [];
+
+      processedData.forEach((row, index) => {
+        const alt = row.Altitude || 0;
+        // Optimization: Only check ground if we are reasonably low
+        if (alt < 3000) {
+          const [lat, lon] = row.Position.split(',').map(Number);
+          terrainSamplePositions.push(Cesium.Cartographic.fromDegrees(lon, lat));
+          terrainSampleIndices.push(index);
+        }
+      });
+
+      if (terrainSamplePositions.length > 0) {
+        try {
+          await Cesium.sampleTerrainMostDetailed(viewer.terrainProvider, terrainSamplePositions);
+
+          // Apply clamped altitude
+          for (let i = 0; i < terrainSamplePositions.length; i++) {
+            const terrainHeight = terrainSamplePositions[i].height; // Height in meters
+            const dataIndex = terrainSampleIndices[i];
+            const originalAltMeters = (processedData[dataIndex].Altitude || 0) * 0.3048;
+
+            // If the terrain is defined and higher than the aircraft (or aircraft is at 0)
+            if (terrainHeight !== undefined) {
+              // Buffer to keep wheels on ground (approx 1-2m)
+              const buffer = 1.0;
+
+              if (originalAltMeters < terrainHeight + buffer) {
+                // Clamp to ground
+                // Convert back to feet for consistency if needed, but we use meters for 3D
+                // We'll store a 'ClampedAltitudeMeters' property to use in the loop below
+                processedData[dataIndex].ClampedAltitudeMeters = terrainHeight + buffer;
+              }
+            }
+          }
+        } catch (error) {
+          console.warn("Terrain sampling failed, proceeding with original altitudes:", error);
+        }
+      }
+      // -----------------------------
+
       const pathPositions = [];
       const pathColors = [];
 
-      processedData.forEach((row) => {
+      processedData.forEach((row, i) => {
         const time = Cesium.JulianDate.fromDate(new Date(row.UTC));
         const [lat, lon] = row.Position.split(',').map(Number);
-        const alt = (row.Altitude || 0) * 0.3048; // feet to meters
+
+        // Use clamped altitude if calculated, otherwise convert original feet to meters
+        let alt;
+        if (row.ClampedAltitudeMeters !== undefined) {
+          alt = row.ClampedAltitudeMeters;
+        } else {
+          alt = (row.Altitude || 0) * 0.3048; // feet to meters
+        }
 
         const position = Cesium.Cartesian3.fromDegrees(lon, lat, alt);
         positionProperty.addSample(time, position);
         pathPositions.push(position);
         pathColors.push(rgbToCesiumColor(getColorFromAltitude(row.Altitude || 0)));
 
-        // Orientation based on heading
+        // Orientation with Banking and Pitch
         const heading = Cesium.Math.toRadians(row.Direction || 0);
-        const hpr = new Cesium.HeadingPitchRoll(heading - Cesium.Math.PI_OVER_TWO, 0, 0);
+        let roll = 0;
+        let pitch = 0;
+
+        // Calculate banking and pitch based on next point
+        if (i < processedData.length - 1) {
+          const nextRow = processedData[i + 1];
+          let currentDir = row.Direction || 0;
+          let nextDir = nextRow.Direction || 0;
+
+          // Banking (Roll)
+          let diff = nextDir - currentDir;
+          if (diff > 180) diff -= 360;
+          if (diff < -180) diff += 360;
+
+          const maxBank = 20;
+          roll = diff * 2.0;
+          if (roll > maxBank) roll = maxBank;
+          if (roll < -maxBank) roll = -maxBank;
+          roll = Cesium.Math.toRadians(roll);
+
+          // Pitch (Climb/Descent)
+          const currentAlt = (row.Altitude || 0);
+          const nextAlt = (nextRow.Altitude || 0);
+          const altDiff = nextAlt - currentAlt;
+
+          // Simple proportional pitch based on altitude change between points
+          // Adjust sensitivity factor (0.1 seems reasonable for ft difference?)
+          // Pitch Up is negative in some frames, positive in others. 
+          // Standard Cesium HeadingPitchRoll: Pitch is rotation around Y-axis.
+          // Positive Pitch is often Nose UP. Let's try Positive = Up.
+          const maxPitch = 15;
+
+          // Sensitivity: 100ft climb in one step -> ~10 degrees?
+          // This depends on the time/distance between steps but proportional works for visual effect.
+          pitch = altDiff * 0.1;
+
+          if (pitch > maxPitch) pitch = maxPitch;
+          if (pitch < -maxPitch) pitch = -maxPitch;
+
+          // Debug direction: If altDiff is positive (Climb), pitch should be positive?
+          // Let's assume +Pitch = Up. 
+          pitch = Cesium.Math.toRadians(pitch);
+        }
+
+        // --- Ground Stability Check ---
+        // If aircraft is on the ground (<= 30ft), force level wings and nose.
+        // Use processedData original altitude (usually AGL/MSL from log)
+        const altitudeFeet = row.Altitude || 0;
+        if (altitudeFeet <= 30) {
+          pitch = 0;
+          roll = 0;
+        }
+
+        // Apply Heading, Pitch, Roll
+        // Pitch is the second argument
+        const hpr = new Cesium.HeadingPitchRoll(heading - Cesium.Math.PI_OVER_TWO, pitch, roll);
         const orientation = Cesium.Transforms.headingPitchRollQuaternion(position, hpr);
         orientationProperty.addSample(time, orientation);
       });
@@ -1697,12 +1859,12 @@
       cesiumAircraftEntity = viewer.entities.add({
         position: positionProperty,
         orientation: orientationProperty,
-        point: {
-          pixelSize: 10,
-          color: Cesium.Color.YELLOW,
-          outlineColor: Cesium.Color.BLACK,
-          outlineWidth: 2,
-          disableDepthTestDistance: Number.POSITIVE_INFINITY
+        model: {
+          uri: 'https://raw.githubusercontent.com/Ysurac/FlightAirMap-3dmodels/master/pa28/glTF2/PA28.glb',
+
+          minimumPixelSize: 200,
+          maximumScale: 128,
+          runAnimations: true
         },
         path: {
           resolution: 1,
@@ -1710,8 +1872,9 @@
             glowPower: 0.1,
             color: Cesium.Color.YELLOW
           }),
-          width: 10,
-          trailTime: 1000
+          width: 2, // Thinner path since we have a model
+          trailTime: 1000,
+          leadTime: 0
         }
       });
 
@@ -1751,14 +1914,23 @@
         document.getElementById('map').style.display = 'none';
         document.getElementById('cesiumContainer').style.display = 'block';
 
-        if (currentFlightData) {
-          create3DFlightPath(currentFlightData);
+        // Show new buttons
+        document.getElementById('followBtn').style.display = 'flex';
+
+
+        if (currentFlightData && currentFlightData.points) {
+          await create3DFlightPath(currentFlightData.points);
           syncPlaybackTo3D();
         }
+
+        // Initialize state (must be after creating entity)
+        isFollowing = false;
+        updateFollowState();
       } else {
         // Switch to 2D
         document.getElementById('map').style.display = 'block';
         document.getElementById('cesiumContainer').style.display = 'none';
+        document.getElementById('followBtn').style.display = 'none';
 
         if (viewer) {
           syncPlaybackFrom3D();
@@ -1768,11 +1940,18 @@
 
     // Sync playback state from 2D to 3D
     function syncPlaybackTo3D() {
-      if (!viewer || !currentFlightData) return;
+      if (!viewer || !currentFlightData || !currentFlightData.points) return;
 
       const currentIndex = parseInt(document.getElementById('progressBar').value);
-      const currentRow = currentFlightData[currentIndex];
-      const currentTime = Cesium.JulianDate.fromDate(new Date(currentRow.UTC));
+      const currentRow = currentFlightData.points[currentIndex];
+
+      let currentTime;
+      if (currentRow.rawUnix) {
+        currentTime = Cesium.JulianDate.fromDate(new Date(currentRow.rawUnix * 1000));
+      } else {
+        // Fallback
+        currentTime = Cesium.JulianDate.fromDate(new Date(currentRow.utcTime || currentRow.time));
+      }
 
       viewer.clock.currentTime = currentTime;
       viewer.clock.shouldAnimate = isPlaying;
@@ -1781,21 +1960,26 @@
 
     // Sync playback state from 3D to 2D
     function syncPlaybackFrom3D() {
-      if (!viewer || !currentFlightData) return;
+      if (!viewer || !currentFlightData || !currentFlightData.points) return;
 
-      const currentTime = Cesium.JulianDate.toDate(viewer.clock.currentTime);
+      const currentTime = Cesium.JulianDate.toDate(viewer.clock.currentTime).getTime();
 
       // Find closest index in flight data
       let closestIndex = 0;
       let minDiff = Infinity;
 
-      currentFlightData.forEach((row, index) => {
-        const diff = Math.abs(new Date(row.UTC) - currentTime);
+      const points = currentFlightData.points;
+      for (let i = 0; i < points.length; i++) {
+        const point = points[i];
+        // Use rawUnix if available, otherwise try parsing utcTime
+        const pointTime = point.rawUnix ? point.rawUnix * 1000 : new Date(point.utcTime).getTime();
+
+        const diff = Math.abs(pointTime - currentTime);
         if (diff < minDiff) {
           minDiff = diff;
-          closestIndex = index;
+          closestIndex = i;
         }
-      });
+      }
 
       document.getElementById('progressBar').value = closestIndex;
       updateDisplay(closestIndex);
@@ -1803,21 +1987,25 @@
 
     // Sync stats from 3D clock
     function syncStatsFrom3D() {
-      if (!viewer || !currentFlightData) return;
+      if (!viewer || !currentFlightData || !currentFlightData.points) return;
 
-      const currentTime = Cesium.JulianDate.toDate(viewer.clock.currentTime);
+      const currentTime = Cesium.JulianDate.toDate(viewer.clock.currentTime).getTime();
 
       // Find closest data point
       let closestIndex = 0;
       let minDiff = Infinity;
 
-      currentFlightData.forEach((row, index) => {
-        const diff = Math.abs(new Date(row.UTC) - currentTime);
+      const points = currentFlightData.points;
+      for (let i = 0; i < points.length; i++) {
+        const point = points[i];
+        const pointTime = point.rawUnix ? point.rawUnix * 1000 : new Date(point.utcTime).getTime();
+
+        const diff = Math.abs(pointTime - currentTime);
         if (diff < minDiff) {
           minDiff = diff;
-          closestIndex = index;
+          closestIndex = i;
         }
-      });
+      }
 
       document.getElementById('progressBar').value = closestIndex;
       updateDisplay(closestIndex);
@@ -2085,6 +2273,30 @@
 
     // Add 3D toggle button event listener
     document.getElementById('toggle3DBtn').addEventListener('click', toggle3DMode);
+
+    // Follow Mode Logic
+    const followBtn = document.getElementById('followBtn');
+    let isFollowing = false; // Default to not following
+
+    followBtn.addEventListener('click', () => {
+      if (!is3DMode || !viewer || !cesiumAircraftEntity) return;
+      isFollowing = !isFollowing;
+      updateFollowState();
+    });
+
+    function updateFollowState() {
+      if (isFollowing) {
+        viewer.trackedEntity = cesiumAircraftEntity;
+        followBtn.classList.add('active');
+        followBtn.style.color = 'white';
+      } else {
+        viewer.trackedEntity = undefined;
+        followBtn.classList.remove('active');
+        followBtn.style.color = '';
+      }
+    }
+
+
 
 
     function togglePlayPause() {
@@ -2456,12 +2668,26 @@
               const direction = parseFloat(row.Direction) || 0;
 
               if (!isNaN(lat) && !isNaN(lng) && !isNaN(altitudeFeet)) {
+                let rawUnix = 0;
+                try {
+                  const dateStr = row.UTC || row.Timestamp;
+                  if (dateStr) {
+                    const d = new Date(dateStr);
+                    if (!isNaN(d.getTime())) {
+                      rawUnix = d.getTime() / 1000;
+                    }
+                  }
+                } catch (e) {
+                  console.warn("Error parsing date:", e);
+                }
+
                 flightPoints.push({
                   lat,
                   lng,
                   altitudeFeet: altitudeFeet,
                   speed: row.Speed || 'N/A',
                   direction: direction,
+                  rawUnix: rawUnix,
                   time: formatTime(row.Timestamp),
                   utcTime: formatUTCTime(row.UTC)
                 });
@@ -2781,6 +3007,11 @@
       const index = parseInt(this.value);
       updateDisplay(index);
       updateAircraftPosition(index);
+
+      // Sync 3D view if active
+      if (is3DMode && viewer) {
+        syncPlaybackTo3D();
+      }
     });
 
     function getChartTheme() {
