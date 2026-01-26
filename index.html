@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>Flight Playback</title>
+  <title>Flight Replay</title>
   <link rel="icon" type="image/png" href="favicon.png">
   <link rel="apple-touch-icon" href="favicon.png">
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
@@ -327,6 +327,82 @@
     #searchBtn:hover {
       transform: scale(1.1);
       background-color: var(--button-hover);
+    }
+
+    #debugBtn {
+      position: absolute;
+      top: 440px;
+      right: 12px;
+      z-index: 1001;
+      padding: 10px;
+      background-color: var(--glass-bg);
+      color: var(--text-main);
+      border-radius: 50%;
+      border: 1px solid var(--glass-border);
+      cursor: pointer;
+      font-size: 1.2rem;
+      box-shadow: 0 4px 6px var(--shadow-color);
+      backdrop-filter: blur(5px);
+      -webkit-backdrop-filter: blur(5px);
+      transition: all 0.3s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 44px;
+      height: 44px;
+    }
+
+    #debugBtn:hover {
+      transform: scale(1.1);
+      background-color: var(--button-hover);
+    }
+
+    #debugBtn.active {
+      background-color: var(--accent-color);
+      color: white;
+    }
+
+    #debugStats {
+      position: absolute;
+      top: 200px;
+      z-index: 1002;
+      background-color: rgba(0, 0, 0, 0.5);
+      border: 1px solid rgba(255, 0, 0, 0.3);
+      padding: 0;
+      color: #ff0000;
+      font-family: 'Courier New', monospace;
+      font-size: 14px;
+      font-weight: bold;
+      display: none;
+      text-align: left;
+      line-height: 1.6;
+    }
+
+    #debugStats.active {
+      display: block;
+    }
+
+    #debugStats .debug-header {
+      text-align: center;
+      background-color: rgba(255, 0, 0, 0.2);
+      padding: 6px 12px;
+      border-bottom: 1px solid rgba(255, 0, 0, 0.3);
+      border-radius: 8px 8px 0 0;
+      font-size: 12px;
+      letter-spacing: 1px;
+    }
+
+    #debugStats .debug-body {
+      padding: 8px 12px;
+    }
+
+    #debugStats .debug-version {
+      text-align: center;
+      font-size: 10px;
+      opacity: 0.7;
+      margin-top: 4px;
+      padding-top: 4px;
+      border-top: 1px solid rgba(255, 0, 0, 0.2);
     }
 
     /* 3D Container */
@@ -1510,8 +1586,28 @@
       <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
     </svg>
   </button>
+  <button id="debugBtn" title="Toggle Debug Info">
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path
+        d="M12 2a2 2 0 0 1 2 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 0 1 7 7h-1.5c0-.59-.48-1.07-1.07-1.07-.59 0-1.07.48-1.07 1.07H15c0-2.76-2.24-5-5-5s-5 2.24-5 5H3.64c0-.59-.48-1.07-1.07-1.07-.59 0-1.07.48-1.07 1.07H0a7 7 0 0 1 7-7h1V5.73c-.6-.34-1-.99-1-1.73a2 2 0 0 1 2-2z">
+      </path>
+      <line x1="8" y1="14" x2="8" y2="17"></line>
+      <line x1="12" y1="14" x2="12" y2="17"></line>
+      <line x1="16" y1="14" x2="16" y2="17"></line>
+    </svg>
+  </button>
+  <div id="debugStats">
+    <div class="debug-header">-DEV DEBUG-</div>
+    <div class="debug-body">
+      <div>FPS: <span id="fpsCounter">0</span></div>
+      <div>MS: <span id="msCounter">0</span></div>
+
+      <div class="debug-version">v0.1.0</div>
+    </div>
+  </div>
   <div id="infoModal" style="display: none;">
-    <h3>About Flight Playback</h3>
+    <h3>About Flight Replay</h3>
 
     <div class="info-group">
       <div class="info-label">Contact</div>
@@ -1578,9 +1674,26 @@
   <button id="followBtn" title="Toggle Follow Mode" style="display: none;">
     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
       stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <circle cx="12" cy="12" r="10" />
-      <line x1="12" y1="8" x2="12" y2="16" />
-      <line x1="8" y1="12" x2="16" y2="12" />
+      <!-- Broken square corners (aiming reticle) -->
+      <!-- Top-left corner -->
+      <path d="M 4 4 L 4 8" />
+      <path d="M 4 4 L 8 4" />
+      <!-- Top-right corner -->
+      <path d="M 20 4 L 20 8" />
+      <path d="M 16 4 L 20 4" />
+      <!-- Bottom-left corner -->
+      <path d="M 4 20 L 4 16" />
+      <path d="M 4 20 L 8 20" />
+      <!-- Bottom-right corner -->
+      <path d="M 20 20 L 20 16" />
+      <path d="M 16 20 L 20 20" />
+      <!-- Top-down plane view in the middle -->
+      <!-- Fuselage (vertical line) -->
+      <path d="M 12 7 L 12 17" stroke-width="1.8" />
+      <!-- Wings (horizontal line) -->
+      <path d="M 8 10.5 L 16 10.5" stroke-width="1.8" />
+      <!-- Tail stabilizer (horizontal line at bottom) -->
+      <path d="M 10 15 L 14 15" stroke-width="1.8" />
     </svg>
   </button>
   <button id="toggleTracksBtn" title="Toggle Single/Multi Track View">
@@ -3373,7 +3486,7 @@
       ).addTo(map);
 
       // Update UI
-      document.getElementById('multi_file_button').textContent = `Playback of flight ${flight.name}`;
+      document.getElementById('multi_file_button').textContent = `Replay ${flight.name}`;
       progressBar.max = flightPathPoints.length - 1;
       progressBar.disabled = false;
       speedControl.disabled = false;
@@ -3913,7 +4026,7 @@
         }
 
         const link = document.createElement('a');
-        link.download = `flight_playback_${new Date().getTime()}.png`;
+        link.download = `Flight_Replay_${new Date().getTime()}.png`;
         link.href = canvas.toDataURL('image/png');
         link.click();
       } catch (error) {
@@ -3959,6 +4072,79 @@
         });
       }
     });
+
+    // Debug button and FPS counter
+    let debugActive = false;
+    let lastFrameTime = performance.now();
+    let frameCount = 0;
+    let fps = 0;
+    let ms = 0;
+    let fpsUpdateInterval = null;
+
+    const debugBtn = document.getElementById('debugBtn');
+    const debugStats = document.getElementById('debugStats');
+    const fpsCounter = document.getElementById('fpsCounter');
+    const msCounter = document.getElementById('msCounter');
+
+
+    // Toggle debug mode
+    debugBtn.addEventListener('click', () => {
+      debugActive = !debugActive;
+
+      if (debugActive) {
+        debugBtn.classList.add('active');
+        debugStats.classList.add('active');
+        startFPSCounter();
+      } else {
+        debugBtn.classList.remove('active');
+        debugStats.classList.remove('active');
+        stopFPSCounter();
+      }
+    });
+
+    function startFPSCounter() {
+      lastFrameTime = performance.now();
+      frameCount = 0;
+
+      // Update FPS and RAM display every second
+      fpsUpdateInterval = setInterval(() => {
+        fps = frameCount;
+        frameCount = 0;
+        fpsCounter.textContent = fps;
+
+
+      }, 1000);
+
+      // Start animation loop
+      requestAnimationFrame(updateFPS);
+    }
+
+    function stopFPSCounter() {
+      if (fpsUpdateInterval) {
+        clearInterval(fpsUpdateInterval);
+        fpsUpdateInterval = null;
+      }
+      fpsCounter.textContent = '0';
+      msCounter.textContent = '0';
+
+    }
+
+    function updateFPS() {
+      if (!debugActive) return;
+
+      const currentTime = performance.now();
+      const delta = currentTime - lastFrameTime;
+
+      // Update ms (frame time)
+      ms = Math.round(delta * 10) / 10; // Round to 1 decimal place
+      msCounter.textContent = ms.toFixed(1);
+
+      lastFrameTime = currentTime;
+      frameCount++;
+
+      // Continue the loop
+      requestAnimationFrame(updateFPS);
+    }
   </script>
 </body>
 
