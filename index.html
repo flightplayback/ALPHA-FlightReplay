@@ -76,14 +76,16 @@
 
     html,
     body {
-      height: 100%;
+      position: fixed;
+      width: 100vw;
       height: 100vh;
       height: 100dvh;
-      /* Dynamic viewport height for mobile */
-      width: 100%;
       margin: 0;
       padding: 0;
       overflow: hidden;
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      user-select: none;
     }
 
     body {
@@ -446,14 +448,16 @@
 
     /* 3D Container */
     #cesiumContainer {
-      position: absolute;
+      position: fixed;
       top: 0;
-      bottom: 0;
       left: 0;
-      right: 0;
-      width: 100%;
-      height: 100%;
+      width: 100vw;
+      height: 100vh;
+      height: 100dvh;
       z-index: 0;
+      border: none;
+      margin: 0;
+      padding: 0;
     }
 
     /* 3D Toggle Button */
@@ -906,15 +910,17 @@
     }
 
     #map {
-      position: absolute;
+      position: fixed;
       top: 0;
-      bottom: 0;
       left: 0;
-      right: 0;
-      height: 100%;
-      width: 100%;
+      width: 100vw;
+      height: 100vh;
+      height: 100dvh;
       z-index: 0;
       background-color: #262626;
+      border: none;
+      margin: 0;
+      padding: 0;
     }
 
     /* Info Box Container */
