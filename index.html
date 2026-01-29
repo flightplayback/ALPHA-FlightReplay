@@ -3,7 +3,10 @@
 
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="viewport"
+    content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Flight Replay</title>
   <link rel="icon" type="image/png" href="favicon.png">
   <link rel="apple-touch-icon" href="favicon.png">
@@ -90,7 +93,7 @@
     /* Floating Buttons */
     #multi_file_button {
       position: absolute;
-      top: 70px;
+      top: calc(env(safe-area-inset-top) + 70px);
       left: 50%;
       transform: translateX(-50%);
       color: var(--text-main);
@@ -110,7 +113,7 @@
 
     #brandingBtn {
       position: absolute;
-      top: 10px;
+      top: calc(env(safe-area-inset-top) + 10px);
       left: 50%;
       transform: translateX(-50%);
       z-index: 1001;
@@ -147,7 +150,7 @@
 
     #toggleMarkersBtn {
       position: absolute;
-      top: 80px;
+      top: calc(env(safe-area-inset-top) + 80px);
       left: 10px;
       z-index: 1001;
       padding: 8px 16px;
@@ -166,7 +169,7 @@
 
     #screenshotBtn {
       position: absolute;
-      top: 140px;
+      top: calc(env(safe-area-inset-top) + 140px);
       right: 12px;
       z-index: 1001;
       padding: 10px;
@@ -189,7 +192,7 @@
 
     #tipBtn {
       position: absolute;
-      top: 200px;
+      top: calc(env(safe-area-inset-top) + 200px);
       right: 12px;
       z-index: 1001;
       padding: 0;
@@ -252,7 +255,7 @@
 
     #layerBtn {
       position: absolute;
-      top: 20px;
+      top: calc(env(safe-area-inset-top) + 20px);
       right: 12px;
       z-index: 1001;
       padding: 10px;
@@ -280,7 +283,7 @@
 
     #infoBtn {
       position: absolute;
-      top: 260px;
+      top: calc(env(safe-area-inset-top) + 260px);
       right: 12px;
       z-index: 1001;
       padding: 10px;
@@ -308,7 +311,7 @@
 
     #layer3DBtn {
       position: absolute;
-      top: 20px;
+      top: calc(env(safe-area-inset-top) + 20px);
       right: 12px;
       z-index: 1001;
       padding: 10px;
@@ -336,7 +339,7 @@
 
     #searchBtn {
       position: absolute;
-      top: 380px;
+      top: calc(env(safe-area-inset-top) + 380px);
       right: 12px;
       z-index: 1001;
       padding: 10px;
@@ -364,7 +367,7 @@
 
     #debugBtn {
       position: absolute;
-      top: 440px;
+      top: calc(env(safe-area-inset-top) + 440px);
       right: 12px;
       z-index: 1001;
       padding: 10px;
@@ -397,7 +400,7 @@
 
     #debugStats {
       position: absolute;
-      top: 200px;
+      top: calc(env(safe-area-inset-top) + 200px);
       z-index: 1002;
       background-color: rgba(0, 0, 0, 0.5);
       border: 1px solid rgba(255, 0, 0, 0.3);
@@ -453,7 +456,7 @@
     /* 3D Toggle Button */
     #toggle3DBtn {
       position: absolute;
-      top: 80px;
+      top: calc(env(safe-area-inset-top) + 80px);
       right: 12px;
       z-index: 1001;
       padding: 10px;
@@ -481,7 +484,7 @@
 
     #followBtn {
       position: absolute;
-      top: 320px;
+      top: calc(env(safe-area-inset-top) + 320px);
       right: 12px;
       z-index: 1001;
       padding: 10px;
@@ -516,7 +519,7 @@
 
     #toggleTracksBtn {
       position: absolute;
-      top: 130px;
+      top: calc(env(safe-area-inset-top) + 130px);
       left: 12px;
       right: auto;
       z-index: 1001;
@@ -556,7 +559,7 @@
     }
 
     .cesium-viewer-toolbar {
-      top: 10px !important;
+      top: calc(env(safe-area-inset-top) + 10px) !important;
       right: 60px !important;
     }
 
@@ -1100,7 +1103,7 @@
     /* Flight Selector Container */
     #flightSelectorContainer {
       position: absolute;
-      top: 250px;
+      top: calc(env(safe-area-inset-top) + 250px);
       left: 0;
       z-index: 1001;
       transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
@@ -1128,7 +1131,7 @@
 
     #flightSelectorToggle {
       position: absolute;
-      top: 190px;
+      top: calc(env(safe-area-inset-top) + 190px);
       left: 12px;
       z-index: 1001;
       padding: 10px;
@@ -1457,7 +1460,7 @@
       /* Vertical layout */
       gap: 0 !important;
       /* No gap between buttons */
-      margin-top: 20px !important;
+      margin-top: calc(env(safe-area-inset-top) + 20px) !important;
       /* Top 10px */
       margin-left: 12px !important;
       /* Left 12px */
