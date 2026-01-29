@@ -919,7 +919,7 @@
     .infosbox {
       position: absolute;
       top: auto;
-      bottom: 20px;
+      bottom: calc(env(safe-area-inset-bottom) + 20px);
       z-index: 1001;
       left: 50%;
       transform: translateX(-50%);
@@ -938,12 +938,12 @@
 
     .infosbox.expanded {
       top: auto;
-      bottom: 20px;
+      bottom: calc(env(safe-area-inset-bottom) + 20px);
     }
 
     .infosbox.collapsed {
       top: auto;
-      bottom: 20px;
+      bottom: calc(env(safe-area-inset-bottom) + 20px);
     }
 
     .info-grid {
