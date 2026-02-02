@@ -2258,6 +2258,7 @@
       <button class="layer-option" onclick="switchBaseLayer('CartoDB Light')">CartoDB Light</button>
       <button class="layer-option" onclick="switchBaseLayer('CartoDB Dark')">CartoDB Dark</button>
       <button class="layer-option" onclick="switchBaseLayer('OpenTopoMap')">OpenTopoMap</button>
+      <button class="layer-option" onclick="switchBaseLayer('VFR Sectional')">VFR Sectional</button>
     </div>
   </div>
   <div id="layer3DModal" style="display: none;">
@@ -2270,6 +2271,7 @@
         Imagery</button>
       <button class="layer-option" onclick="switch3DBaseLayer('ArcGIS World Hillshade')">ArcGIS World Hillshade</button>
       <button class="layer-option" onclick="switch3DBaseLayer('OpenStreetMap')">OpenStreetMap</button>
+      <button class="layer-option" onclick="switch3DBaseLayer('VFR Sectional')">VFR Sectional</button>
     </div>
   </div>
   <div id="loadingOverlay">
@@ -2551,6 +2553,20 @@
             }
           }));
 
+          // Add VFR Sectional
+          filteredViewModels.push(new Cesium.ProviderViewModel({
+            name: 'VFR Sectional',
+            iconUrl: 'http://wms.chartbundle.com/tms/v1.0/sec/4/4/6.png', // Temporary Icon
+            tooltip: 'FAA VFR Sectional Charts',
+            creationFunction: function () {
+              return new Cesium.UrlTemplateImageryProvider({
+                url: 'https://tiles.arcgis.com/tiles/ssFJjBXIUyZDrSYZ/arcgis/rest/services/VFR_Sectional/MapServer/tile/{z}/{y}/{x}',
+                minimumLevel: 6,
+                maximumLevel: 11
+              });
+            }
+          }));
+
           const selectedImageryViewModel = filteredViewModels.find(vm => vm.name.includes('ArcGIS World Imagery')) || filteredViewModels[0];
 
           viewer = new Cesium.Viewer('cesiumContainer', {
@@ -2601,6 +2617,13 @@
           viewer.clock.onTick.addEventListener((clock) => {
             if (!is3DMode || !currentFlightData || !isPlaying) return;
             syncStatsFrom3D();
+          });
+
+          // Update ATC Label position in 3D (postRender for smooth following)
+          viewer.scene.postRender.addEventListener(() => {
+            if (is3DMode && radarModeEnabled && atcDataLabel) {
+              updateATCLabelPosition();
+            }
           });
 
           cesiumInitialized = true;
@@ -3300,13 +3323,28 @@
 
       // Toggle between 2D and 3D mode
       async function toggle3DMode() {
+        // Capture playback state before switching
+        const wasPlaying = isPlaying;
+        if (wasPlaying) {
+          pauseFlight();
+          updatePlayPauseButton();
+        }
+
         is3DMode = !is3DMode;
 
         if (is3DMode) {
           // Initialize Cesium if not already done
           if (!cesiumInitialized) {
             await initCesium();
-            if (!cesiumInitialized) return; // Failed to initialize
+            if (!cesiumInitialized) {
+              // Revert state if initialization failed
+              is3DMode = false;
+              if (wasPlaying) {
+                playFlight();
+                updatePlayPauseButton();
+              }
+              return; // Failed to initialize
+            }
           }
 
           // Switch to 3D
@@ -3339,8 +3377,12 @@
           updateTrackVisibility();
 
           // Initialize state (must be after creating entity)
-          isFollowing = false;
           updateFollowState();
+
+          // Refresh Radar Label if enabled (to move it to 3D container)
+          if (radarModeEnabled) {
+            createATCLabel();
+          }
         } else {
           // Switch to 2D
           document.getElementById('map').style.display = 'block';
@@ -3356,6 +3398,17 @@
           if (viewer) {
             syncPlaybackFrom3D();
           }
+
+          // Refresh Radar Label if enabled (to move it back to 2D map)
+          if (radarModeEnabled) {
+            createATCLabel();
+          }
+        }
+
+        // Restore playback if it was active
+        if (wasPlaying) {
+          playFlight();
+          updatePlayPauseButton();
         }
       }
 
@@ -3512,6 +3565,16 @@
         detectRetina: true
       });
 
+      const vfrSectional = L.tileLayer('https://tiles.arcgis.com/tiles/ssFJjBXIUyZDrSYZ/arcgis/rest/services/VFR_Sectional/MapServer/tile/{z}/{y}/{x}', {
+        attribution: 'FAA VFR Sectional',
+        crossOrigin: true,
+        detectRetina: true,
+        minZoom: 6,
+        maxNativeZoom: 11,
+        maxZoom: 19,
+        opacity: 1.0
+      });
+
       esriSatellite.addTo(map);
       L.control.scale().addTo(map);
 
@@ -3523,7 +3586,8 @@
         "Esri Streets": esriStreets,
         "CartoDB Light": cartoLight,
         "CartoDB Dark": cartoDark,
-        "OpenTopoMap": opentopomap
+        "OpenTopoMap": opentopomap,
+        "VFR Sectional": vfrSectional
       };
 
       let currentLayerName = "Esri Satellite";
@@ -3571,28 +3635,54 @@
       });
 
       window.switchBaseLayer = function (name) {
+        // Toggle Logic for VFR Sectional
+        if (name === "VFR Sectional") {
+          if (map.hasLayer(baseLayers[name])) {
+            map.removeLayer(baseLayers[name]);
+            // Remove active class
+            document.querySelectorAll('.layer-option').forEach(btn => {
+              if (btn.textContent === name) btn.classList.remove('active');
+            });
+          } else {
+            map.addLayer(baseLayers[name]);
+            // Add active class
+            document.querySelectorAll('.layer-option').forEach(btn => {
+              if (btn.textContent === name) btn.classList.add('active');
+            });
+          }
+          // Do NOT close modal for overlays to allow stacking
+          return;
+        }
+
+        // Standard Base Layer Logic (Single Choice)
         if (currentLayerName === name) {
           layerModal.style.display = 'none';
           return;
         }
 
-        // Remove current layer
+        // Remove old base layer (excluding overlays)
         if (baseLayers[currentLayerName]) {
           map.removeLayer(baseLayers[currentLayerName]);
         }
 
-        // Add new layer
+        // Add new base layer
         if (baseLayers[name]) {
           map.addLayer(baseLayers[name]);
+          // Keep overlays on top if they exist
+          if (map.hasLayer(vfrSectional)) {
+            vfrSectional.bringToFront();
+          }
         }
         currentLayerName = name;
 
-        // Update UI active state
+        // Update UI active state for Base Layers Only
         document.querySelectorAll('.layer-option').forEach(btn => {
-          if (btn.textContent === name) {
-            btn.classList.add('active');
-          } else {
-            btn.classList.remove('active');
+          if (btn.textContent !== "VFR Sectional") {
+            if (btn.textContent === name) {
+              btn.classList.add('active');
+            } else {
+              btn.classList.remove('active');
+            }
           }
         });
 
@@ -3667,7 +3757,7 @@
       // Initial content - will be updated dynamically
       errorModal.innerHTML = `
       <h3>File Format Error</h3>
-      <p>One or more files format not supported.<br>Please use files from FlightRadar24 output.</p>
+      <p>One or more files format not supported.<br>Please use files from FlightRadar24, FlightAware or ADSB Exchange output.</p>
       <button id="errorOkBtn">OK</button>
     `;
       document.body.appendChild(errorModal);
@@ -3789,7 +3879,8 @@
         const displayStyle = is3DMode ? 'none' : 'flex';
 
         if (f2dBtn) f2dBtn.style.display = displayStyle;
-        if (radarBtn) radarBtn.style.display = displayStyle;
+        // Radar button is now shared, so we don't hide it
+        // if (radarBtn) radarBtn.style.display = displayStyle;
       });
 
       // Follow Mode Logic
@@ -3938,7 +4029,7 @@
       });
 
       function createATCLabel() {
-        if (!aircraftMarker || !flightPathPoints || flightPathPoints.length === 0) return;
+        if (!flightPathPoints || flightPathPoints.length === 0) return;
 
         // Remove existing label if any
         removeATCLabel();
@@ -3954,13 +4045,19 @@
         // Build the label content
         updateATCLabelContent(currentIndex);
 
-        // Add to map container
-        const mapContainer = document.getElementById('map');
-        mapContainer.appendChild(atcDataLabel);
+        // Add to appropriate container based on mode
+        if (is3DMode) {
+          document.getElementById('cesiumContainer').appendChild(atcDataLabel);
+        } else {
+          document.getElementById('map').appendChild(atcDataLabel);
+        }
 
         // Position it relative to aircraft
-        const aircraftLatLng = aircraftMarker.getLatLng();
-        updateATCLabelPosition(aircraftLatLng);
+        if (is3DMode) {
+          updateATCLabelPosition();
+        } else if (aircraftMarker) {
+          updateATCLabelPosition(aircraftMarker.getLatLng());
+        }
       }
 
       function updateATCLabelContent(index, pointOverride = null) {
@@ -3994,27 +4091,50 @@
       }
 
       function updateATCLabelPosition(latLng) {
-        if (!atcDataLabel || !map) return;
+        if (!atcDataLabel) return;
 
-        // Convert lat/lng to pixel coordinates
-        const point = map.latLngToContainerPoint(latLng);
+        let screenX, screenY, containerWidth;
 
-        // Get limits and dimensions
-        const mapContainer = map.getContainer();
-        const mapWidth = mapContainer.clientWidth;
+        if (is3DMode) {
+          if (!viewer || !cesiumAircraftEntity) return;
+          // Use current time/position from viewer
+          const position = cesiumAircraftEntity.position.getValue(viewer.clock.currentTime);
+          if (!position) return;
+
+          const canvasPos = Cesium.SceneTransforms.wgs84ToWindowCoordinates(viewer.scene, position);
+          if (!canvasPos) return;
+
+          screenX = canvasPos.x;
+          screenY = canvasPos.y;
+          // Use viewer container width
+          containerWidth = document.getElementById('cesiumContainer').clientWidth;
+
+          // Safety check for off-screen (behind camera)
+          // Simple heuristic: SceneTransforms usually returns coordinate, but we can verify visibility if needed.
+          // For now, if x/y are wildly off, we might want to hide, but the transform logic typically handles basic projection.
+
+        } else {
+          // 2D Mode
+          if (!map || !latLng) return;
+          const point = map.latLngToContainerPoint(latLng);
+          screenX = point.x;
+          screenY = point.y;
+          containerWidth = map.getContainer().clientWidth;
+        }
+
         const labelWidth = atcDataLabel.offsetWidth || 120; // Default estimate if not measured yet
 
         // Default position: 30px to the right
-        let leftPos = point.x + 30;
+        let leftPos = screenX + 30;
 
         // Check if it overflows the right edge
-        if (leftPos + labelWidth > mapWidth - 10) {
+        if (leftPos + labelWidth > containerWidth - 10) {
           // Flip to left side
-          leftPos = point.x - 30 - labelWidth;
+          leftPos = screenX - 30 - labelWidth;
         }
 
         atcDataLabel.style.left = leftPos + 'px';
-        atcDataLabel.style.top = (point.y - 10) + 'px';
+        atcDataLabel.style.top = (screenY - 10) + 'px';
       }
 
       function removeATCLabel() {
@@ -4440,6 +4560,9 @@
 
         // Clear ATC data label
         removeATCLabel();
+        radarModeEnabled = false; // Reset radar mode
+        const radarBtn = document.getElementById('radarBtn');
+        if (radarBtn) radarBtn.classList.remove('active');
 
         const toggleBtn = document.getElementById('toggleGraphBtn');
         if (toggleBtn) toggleBtn.style.display = 'none';
@@ -4501,7 +4624,7 @@
               throw new Error("KML Parse Error");
             }
 
-            const flightPoints = [];
+            let flightPoints = [];
             const flightSegments = [];
 
             // Extract Flight Name (try Document name, or Filename)
@@ -4511,126 +4634,281 @@
               flightName = docName.textContent;
             }
 
-            // Extract Aircraft Model from Document description (applies to entire flight)
-            let aircraftModel = null;
-            let aircraftInfo = null;
-            const docDescription = xmlDoc.querySelector('Document > description');
-            if (docDescription) {
-              const docHtmlContent = docDescription.textContent;
-              // Look for "Aircraft<span...>(MODEL)</span>"
-              const modelMatch = docHtmlContent.match(/Aircraft.*?\((\w+)\)/);
-              if (modelMatch) {
-                aircraftModel = modelMatch[1];
-              }
+            // Attempt to parse standard aircraft info (FR24 style) or basic info
+            let aircraftInfo = parseKMLAircraftInfo(e.target.result);
 
-              // Parse aircraft information from KML
-              aircraftInfo = parseKMLAircraftInfo(e.target.result);
+            // Refine Name/Callsign if possible
+            if (aircraftInfo && aircraftInfo.callsign) {
+              // Sometimes the file name is better, sometimes the parsed callsign. 
+              // For FlightAware: "FlightAware ✈ OXF9610..."
+              // aircraftInfo might be null for FlightAware if the regex doesn't match
             }
 
-            // Find all Placemarks that look like track points (have TimeStamp)
-            const placemarks = xmlDoc.querySelectorAll('Placemark');
+            // CHECK FOR FLIGHTAWARE FORMAT (gx:Track)
+            const gxTracks = xmlDoc.getElementsByTagName("gx:Track");
+            const hasGxTrack = gxTracks.length > 0;
 
-            placemarks.forEach(pm => {
-              const timestampNode = pm.querySelector('TimeStamp > when');
-              const pointNode = pm.querySelector('Point > coordinates');
-              const descriptionNode = pm.querySelector('description');
+            if (hasGxTrack) {
+              // --- FlightAware / ADSBExchange Parsing Logic ---
 
-              if (timestampNode && pointNode) {
-                const coords = pointNode.textContent.trim().split(',');
-                const lng = parseFloat(coords[0]);
-                const lat = parseFloat(coords[1]);
-                const alt = parseFloat(coords[2]) || 0;
+              // Helper: Haversine Distance in Meters
+              const getDistMeters = (lat1, lon1, lat2, lon2) => {
+                const R = 6371e3; // metres
+                const φ1 = lat1 * Math.PI / 180;
+                const φ2 = lat2 * Math.PI / 180;
+                const Δφ = (lat2 - lat1) * Math.PI / 180;
+                const Δλ = (lon2 - lon1) * Math.PI / 180;
+                const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+                  Math.cos(φ1) * Math.cos(φ2) *
+                  Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+                const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+                return R * c;
+              };
 
-                let altitudeFeet = 0;
-                let speedKt = 0;
-                let headingDeg = 0;
+              // Helper: Bearing
+              const getBearing = (lat1, lon1, lat2, lon2) => {
+                const y = Math.sin(lon2 - lon1) * Math.cos(lat2);
+                const x = Math.cos(lat1) * Math.sin(lat2) -
+                  Math.sin(lat1) * Math.cos(lat2) * Math.cos(lon2 - lon1);
+                const θ = Math.atan2(y, x);
+                return (θ * 180 / Math.PI + 360) % 360;
+              };
 
-                if (descriptionNode) {
-                  const htmlContent = descriptionNode.textContent;
-                  const parser = new DOMParser();
-                  const htmlDoc = parser.parseFromString(htmlContent, 'text/html');
+              // Iterate over ALL tracks found in the file
+              for (let t = 0; t < gxTracks.length; t++) {
+                const track = gxTracks[t];
+                const whens = track.getElementsByTagName("when");
+                const coords = track.getElementsByTagName("gx:coord"); // look for namespaced tag
 
-                  // Helper to extracting numeric value from sibling span
-                  const extractValue = (label) => {
-                    const bTags = htmlDoc.getElementsByTagName('b');
-                    for (let i = 0; i < bTags.length; i++) {
-                      if (bTags[i].textContent.includes(label)) {
-                        let valueContainer = null;
-                        // Check 1: <description>...<span><b>Label:</b></span> <span>Value</span>...</description>
-                        if (bTags[i].parentElement && bTags[i].parentElement.tagName.toLowerCase() === 'span') {
-                          valueContainer = bTags[i].parentElement.nextElementSibling;
-                        }
-                        // Check 2: Direct sibling? <b>Label:</b> <span>Value</span>
-                        if (!valueContainer) {
-                          valueContainer = bTags[i].nextElementSibling;
-                        }
+                // Handle case where getElementsByTagName("gx:coord") returns empty (namespace issues)
+                let coordNodes = coords;
+                if (coordNodes.length === 0) {
+                  coordNodes = track.getElementsByTagName("coord"); // Try without prefix
+                }
+                // Fallback: iterate children if tag name fails
+                if (coordNodes.length === 0) {
+                  const potentialCoords = [];
+                  for (let i = 0; i < track.children.length; i++) {
+                    if (track.children[i].tagName === "gx:coord") potentialCoords.push(track.children[i]);
+                  }
+                  coordNodes = potentialCoords;
+                }
 
-                        if (valueContainer) {
-                          let text = valueContainer.textContent.trim();
+                const len = Math.min(whens.length, coordNodes.length);
 
-                          // Handle range "24,925 ft - 23,325 ft" -> take the right side
-                          if (text.includes('-')) {
-                            const parts = text.split('-');
-                            text = parts[parts.length - 1].trim();
-                          }
+                for (let i = 0; i < len; i++) {
+                  const rawTime = whens[i].textContent;
+                  const coordText = coordNodes[i].textContent.trim();
+                  const parts = coordText.split(' '); // FlightAware space separated: lon lat alt
 
-                          // Remove commas "23,325" -> "23325"
-                          text = text.replace(/,/g, '');
+                  if (parts.length >= 2) {
+                    const lng = parseFloat(parts[0]);
+                    const lat = parseFloat(parts[1]);
+                    const altMeters = parts.length > 2 ? parseFloat(parts[2]) : 0;
+                    const altFeet = altMeters * 3.28084; // Convert meters to feet
 
-                          const match = text.match(/(\d+)/);
-                          if (match) return parseInt(match[1]);
-                        }
-                      }
-                    }
+                    const unixTime = new Date(rawTime).getTime() / 1000;
 
-                    // Fallback: Regex on full text
-                    const cleanText = htmlDoc.body.textContent || "";
-                    const backupRegex = new RegExp(label + "\\s*[:]?\\s*(\\d+)");
-                    const match = cleanText.match(backupRegex);
-                    if (match) return parseInt(match[1]);
+                    flightPoints.push({
+                      lat: lat,
+                      lng: lng,
+                      altitudeFeet: altFeet,
+                      speed: 0, // Calculated later
+                      direction: 0, // Calculated later
+                      rawUnix: unixTime,
+                      time: formatTime(rawTime),
+                      utcTime: formatUTCTime(rawTime),
+                      model: 'Unknown'
+                    });
+                  }
+                }
+              }
 
-                    return null;
-                  };
+              // Sort points by time to ensure correct order after merging tracks
+              flightPoints.sort((a, b) => a.rawUnix - b.rawUnix);
 
-                  const altConf = extractValue('Altitude');
-                  if (altConf !== null) altitudeFeet = altConf;
+              // Post-processing to calculate Speed and Heading
+              for (let i = 0; i < flightPoints.length; i++) {
+                const p1 = flightPoints[i];
+                if (i < flightPoints.length - 1) {
+                  const p2 = flightPoints[i + 1];
+                  const distMeters = getDistMeters(p1.lat, p1.lng, p2.lat, p2.lng);
+                  const timeDiff = p2.rawUnix - p1.rawUnix;
 
-                  const spdConf = extractValue('Speed');
-                  if (spdConf !== null) speedKt = spdConf;
+                  if (timeDiff > 0) {
+                    const speedMps = distMeters / timeDiff;
+                    p1.speed = speedMps * 1.94384; // m/s to knots
+                  }
 
-                  const hdgConf = extractValue('Heading');
-                  if (hdgConf !== null) headingDeg = hdgConf;
+                  // Avoid zero distance heading Calculation
+                  if (distMeters > 0) {
+                    p1.direction = getBearing(p1.lat * Math.PI / 180, p1.lng * Math.PI / 180, p2.lat * Math.PI / 180, p2.lng * Math.PI / 180);
+                  } else {
+                    // inherit previous or 0
+                    p1.direction = (i > 0) ? flightPoints[i - 1].direction : 0;
+                  }
 
                 } else {
-                  // Fallback if no description (standard KML)
-                  // standard KML, coords[2] is meters.
-                  altitudeFeet = (parseFloat(coords[2]) || 0) * 3.28084;
+                  // Last point: copy from previous
+                  if (i > 0) {
+                    p1.speed = flightPoints[i - 1].speed;
+                    p1.direction = flightPoints[i - 1].direction;
+                  }
+                }
+              }
+
+              // Try to extract better name from Document Name
+              // Example: "FlightAware ✈ OXF9610 01-Feb-2026 (KFFZ-KFFZ)"
+              if (flightName.includes('FlightAware')) {
+                const match = flightName.match(/FlightAware\s+✈\s+(\w+)/);
+                if (match) {
+                  // Use callsign as name if found
+                  flightName = match[1];
                 }
 
-                // Check for Style Heading fallback
-                if (headingDeg === 0) {
-                  const iconHeading = pm.querySelector('Style > IconStyle > heading');
-                  if (iconHeading) headingDeg = parseInt(iconHeading.textContent);
-                }
+                // If aircraft info missing, try to construct basic one
+                if (!aircraftInfo) {
+                  aircraftInfo = {};
+                  if (match) aircraftInfo.callsign = match[1];
 
-                if (!isNaN(lat) && !isNaN(lng)) {
-                  const rawTime = timestampNode.textContent;
-                  const unixTime = new Date(rawTime).getTime() / 1000;
+                  // Try to parse airports
+                  const airportsMatch = docName.textContent.match(/\(([A-Z]{3,4})-([A-Z]{3,4})\)/);
+                  if (airportsMatch) {
+                    aircraftInfo.DepartureAirport = airportsMatch[1];
+                    aircraftInfo.ArrivalAirport = airportsMatch[2];
+                  }
 
-                  flightPoints.push({
-                    lat: lat,
-                    lng: lng,
-                    altitudeFeet: altitudeFeet,
-                    speed: speedKt,
-                    direction: headingDeg,
-                    rawUnix: unixTime,
-                    time: formatTime(rawTime),
-                    utcTime: formatUTCTime(rawTime),
-                    model: aircraftModel
+                  // Look for specific placemark names for details
+                  const placemarks = xmlDoc.querySelectorAll('Placemark > name');
+                  placemarks.forEach(pmName => {
+                    // Check if matches callsign
+                    if (pmName.textContent === aircraftInfo.callsign) {
+                      // Found logic
+                    }
                   });
                 }
               }
-            });
+
+            } else {
+              // --- Original FlightRadar24 Parsing Logic ---
+
+              // Extract Aircraft Model from Document description (applies to entire flight)
+              let aircraftModel = null;
+              const docDescription = xmlDoc.querySelector('Document > description');
+              if (docDescription) {
+                const docHtmlContent = docDescription.textContent;
+                // Look for "Aircraft<span...>(MODEL)</span>"
+                const modelMatch = docHtmlContent.match(/Aircraft.*?\((\w+)\)/);
+                if (modelMatch) {
+                  aircraftModel = modelMatch[1];
+                }
+              }
+
+              // Find all Placemarks that look like track points (have TimeStamp)
+              const placemarks = xmlDoc.querySelectorAll('Placemark');
+
+              placemarks.forEach(pm => {
+                const timestampNode = pm.querySelector('TimeStamp > when');
+                const pointNode = pm.querySelector('Point > coordinates');
+                const descriptionNode = pm.querySelector('description');
+
+                if (timestampNode && pointNode) {
+                  const coords = pointNode.textContent.trim().split(',');
+                  const lng = parseFloat(coords[0]);
+                  const lat = parseFloat(coords[1]);
+                  const alt = parseFloat(coords[2]) || 0;
+
+                  let altitudeFeet = 0;
+                  let speedKt = 0;
+                  let headingDeg = 0;
+
+                  if (descriptionNode) {
+                    const htmlContent = descriptionNode.textContent;
+                    const parser = new DOMParser();
+                    const htmlDoc = parser.parseFromString(htmlContent, 'text/html');
+
+                    // Helper to extracting numeric value from sibling span
+                    const extractValue = (label) => {
+                      const bTags = htmlDoc.getElementsByTagName('b');
+                      for (let i = 0; i < bTags.length; i++) {
+                        if (bTags[i].textContent.includes(label)) {
+                          let valueContainer = null;
+                          // Check 1: <description>...<span><b>Label:</b></span> <span>Value</span>...</description>
+                          if (bTags[i].parentElement && bTags[i].parentElement.tagName.toLowerCase() === 'span') {
+                            valueContainer = bTags[i].parentElement.nextElementSibling;
+                          }
+                          // Check 2: Direct sibling? <b>Label:</b> <span>Value</span>
+                          if (!valueContainer) {
+                            valueContainer = bTags[i].nextElementSibling;
+                          }
+
+                          if (valueContainer) {
+                            let text = valueContainer.textContent.trim();
+
+                            // Handle range "24,925 ft - 23,325 ft" -> take the right side
+                            if (text.includes('-')) {
+                              const parts = text.split('-');
+                              text = parts[parts.length - 1].trim();
+                            }
+
+                            // Remove commas "23,325" -> "23325"
+                            text = text.replace(/,/g, '');
+
+                            const match = text.match(/(\d+)/);
+                            if (match) return parseInt(match[1]);
+                          }
+                        }
+                      }
+
+                      // Fallback: Regex on full text
+                      const cleanText = htmlDoc.body.textContent || "";
+                      const backupRegex = new RegExp(label + "\\s*[:]?\\s*(\\d+)");
+                      const match = cleanText.match(backupRegex);
+                      if (match) return parseInt(match[1]);
+
+                      return null;
+                    };
+
+                    const altConf = extractValue('Altitude');
+                    if (altConf !== null) altitudeFeet = altConf;
+
+                    const spdConf = extractValue('Speed');
+                    if (spdConf !== null) speedKt = spdConf;
+
+                    const hdgConf = extractValue('Heading');
+                    if (hdgConf !== null) headingDeg = hdgConf;
+
+                  } else {
+                    // Fallback if no description (standard KML)
+                    // standard KML, coords[2] is meters.
+                    altitudeFeet = (parseFloat(coords[2]) || 0) * 3.28084;
+                  }
+
+                  // Check for Style Heading fallback
+                  if (headingDeg === 0) {
+                    const iconHeading = pm.querySelector('Style > IconStyle > heading');
+                    if (iconHeading) headingDeg = parseInt(iconHeading.textContent);
+                  }
+
+                  if (!isNaN(lat) && !isNaN(lng)) {
+                    const rawTime = timestampNode.textContent;
+                    const unixTime = new Date(rawTime).getTime() / 1000;
+
+                    flightPoints.push({
+                      lat: lat,
+                      lng: lng,
+                      altitudeFeet: altitudeFeet,
+                      speed: speedKt,
+                      direction: headingDeg,
+                      rawUnix: unixTime,
+                      time: formatTime(rawTime),
+                      utcTime: formatUTCTime(rawTime),
+                      model: aircraftModel
+                    });
+                  }
+                }
+              });
+            }
 
             if (flightPoints.length === 0) {
               if (onComplete) onComplete(false, file.name);
