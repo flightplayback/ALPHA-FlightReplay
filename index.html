@@ -2553,19 +2553,7 @@
             }
           }));
 
-          // Add VFR Sectional
-          filteredViewModels.push(new Cesium.ProviderViewModel({
-            name: 'VFR Sectional',
-            iconUrl: 'http://wms.chartbundle.com/tms/v1.0/sec/4/4/6.png', // Temporary Icon
-            tooltip: 'FAA VFR Sectional Charts',
-            creationFunction: function () {
-              return new Cesium.UrlTemplateImageryProvider({
-                url: 'https://tiles.arcgis.com/tiles/ssFJjBXIUyZDrSYZ/arcgis/rest/services/VFR_Sectional/MapServer/tile/{z}/{y}/{x}',
-                minimumLevel: 6,
-                maximumLevel: 11
-              });
-            }
-          }));
+
 
           const selectedImageryViewModel = filteredViewModels.find(vm => vm.name.includes('ArcGIS World Imagery')) || filteredViewModels[0];
 
@@ -3101,6 +3089,113 @@
         const positionProperty = new Cesium.SampledPositionProperty();
         const orientationProperty = new Cesium.SampledProperty(Cesium.Quaternion);
 
+        // Determine 3D Model URI & Heading Offset
+        let modelUri = 'https://raw.githubusercontent.com/Ysurac/FlightAirMap-3dmodels/master/pa28/glTF2/PA28.glb';
+        // Base heading offset for standard models (facing East/X?) to align with Cesium Heading (North)
+        const baseHeadingOffset = -Cesium.Math.PI_OVER_TWO;
+
+        let correctionQuat = null;
+        let pitchSensitivity = 0.1; // Default sensitivity (fallback)
+        let maxPitch = 25; // Default max pitch (Geometric)
+        let useGeometricPitch = true; // Enable geometric pitch for ALL aircraft
+
+        // Check for aircraft type (A320)
+        let foundModel = "";
+        if (flight.points && flight.points.length > 0 && flight.points[0].model) {
+          foundModel = flight.points[0].model;
+        } else if (flight.aircraftInfo && (flight.aircraftInfo.ACICAOCode || flight.aircraftInfo.model)) {
+          foundModel = flight.aircraftInfo.ACICAOCode || flight.aircraftInfo.model;
+        }
+
+        // Airbus Narrow Bodies (A318, A319, A320, A321)
+        if (/A318/i.test(foundModel || "")) {
+          modelUri = 'https://raw.githubusercontent.com/Flightradar24/fr24-3d-models/master/models/a318.glb';
+          correctionQuat = Cesium.Quaternion.fromAxisAngle(Cesium.Cartesian3.UNIT_Z, Cesium.Math.toRadians(-180));
+        } else if (/A319|A19N/i.test(foundModel || "")) {
+          modelUri = 'https://raw.githubusercontent.com/Flightradar24/fr24-3d-models/master/models/a319.glb';
+          correctionQuat = Cesium.Quaternion.fromAxisAngle(Cesium.Cartesian3.UNIT_Z, Cesium.Math.toRadians(-180));
+        } else if (/A320|A20N|A32N/i.test(foundModel || "") || (foundModel && foundModel.toUpperCase().includes('A320'))) {
+          modelUri = 'https://raw.githubusercontent.com/Flightradar24/fr24-3d-models/master/models/a320.glb';
+          correctionQuat = Cesium.Quaternion.fromAxisAngle(Cesium.Cartesian3.UNIT_Z, Cesium.Math.toRadians(-180));
+        } else if (/A321|A21N/i.test(foundModel || "")) {
+          modelUri = 'https://raw.githubusercontent.com/Flightradar24/fr24-3d-models/master/models/a321.glb';
+          correctionQuat = Cesium.Quaternion.fromAxisAngle(Cesium.Cartesian3.UNIT_Z, Cesium.Math.toRadians(-180));
+        }
+
+        const isAirbusA380 = /A388|A380/i.test(foundModel || "");
+        if (isAirbusA380) {
+          modelUri = 'https://raw.githubusercontent.com/Ysurac/FlightAirMap-3dmodels/master/a380/glTF2/A380.glb';
+        }
+
+        // Boeing 737 Family
+        if (/B73[6251]/i.test(foundModel || "")) {
+          // B736, B732, B735, B731 -> b736.glb
+          modelUri = 'https://raw.githubusercontent.com/Flightradar24/fr24-3d-models/master/models/b736.glb';
+          correctionQuat = Cesium.Quaternion.fromAxisAngle(Cesium.Cartesian3.UNIT_Z, Cesium.Math.toRadians(-180));
+        } else if (/B737|B37M|B733/i.test(foundModel || "")) {
+          // B737, B37M, B733 -> b737.glb
+          modelUri = 'https://raw.githubusercontent.com/Flightradar24/fr24-3d-models/master/models/b737.glb';
+          correctionQuat = Cesium.Quaternion.fromAxisAngle(Cesium.Cartesian3.UNIT_Z, Cesium.Math.toRadians(-180));
+        } else if (/B738|B38M|B734/i.test(foundModel || "")) {
+          // B738, B38M, B734 -> b738.glb
+          modelUri = 'https://raw.githubusercontent.com/Flightradar24/fr24-3d-models/master/models/b738.glb';
+          correctionQuat = Cesium.Quaternion.fromAxisAngle(Cesium.Cartesian3.UNIT_Z, Cesium.Math.toRadians(-180));
+        } else if (/B739|B39M|B3XM/i.test(foundModel || "")) {
+          // B739, B39M, B3XM -> b739.glb
+          modelUri = 'https://raw.githubusercontent.com/Flightradar24/fr24-3d-models/master/models/b739.glb';
+          correctionQuat = Cesium.Quaternion.fromAxisAngle(Cesium.Cartesian3.UNIT_Z, Cesium.Math.toRadians(-180));
+        }
+
+        // Boeing 747 Family
+        if (/B74[12348S]|E4/i.test(foundModel || "")) {
+          modelUri = 'https://raw.githubusercontent.com/Flightradar24/fr24-3d-models/master/models/b748.glb';
+          correctionQuat = Cesium.Quaternion.fromAxisAngle(Cesium.Cartesian3.UNIT_Z, Cesium.Math.toRadians(-180));
+        }
+
+        // Boeing 757 Family
+        if (/B752/i.test(foundModel || "")) {
+          modelUri = 'https://raw.githubusercontent.com/Flightradar24/fr24-3d-models/master/models/b752.glb';
+          correctionQuat = Cesium.Quaternion.fromAxisAngle(Cesium.Cartesian3.UNIT_Z, Cesium.Math.toRadians(-180));
+        } else if (/B753/i.test(foundModel || "")) {
+          modelUri = 'https://raw.githubusercontent.com/Flightradar24/fr24-3d-models/master/models/b753.glb';
+          correctionQuat = Cesium.Quaternion.fromAxisAngle(Cesium.Cartesian3.UNIT_Z, Cesium.Math.toRadians(-180));
+        }
+
+        // Boeing 767 Family
+        if (/B762/i.test(foundModel || "")) {
+          modelUri = 'https://raw.githubusercontent.com/Flightradar24/fr24-3d-models/master/models/b762.glb';
+          correctionQuat = Cesium.Quaternion.fromAxisAngle(Cesium.Cartesian3.UNIT_Z, Cesium.Math.toRadians(-180));
+        } else if (/B763/i.test(foundModel || "")) {
+          modelUri = 'https://raw.githubusercontent.com/Flightradar24/fr24-3d-models/master/models/b763.glb';
+          correctionQuat = Cesium.Quaternion.fromAxisAngle(Cesium.Cartesian3.UNIT_Z, Cesium.Math.toRadians(-180));
+        } else if (/B764/i.test(foundModel || "")) {
+          modelUri = 'https://raw.githubusercontent.com/Flightradar24/fr24-3d-models/master/models/b764.glb';
+          correctionQuat = Cesium.Quaternion.fromAxisAngle(Cesium.Cartesian3.UNIT_Z, Cesium.Math.toRadians(-180));
+        }
+
+        // Boeing 777 Family
+        if (/B772|B77L/i.test(foundModel || "")) {
+          modelUri = 'https://raw.githubusercontent.com/Flightradar24/fr24-3d-models/master/models/b772.glb';
+          correctionQuat = Cesium.Quaternion.fromAxisAngle(Cesium.Cartesian3.UNIT_Z, Cesium.Math.toRadians(-180));
+        } else if (/B773|B77W/i.test(foundModel || "")) {
+          modelUri = 'https://raw.githubusercontent.com/Flightradar24/fr24-3d-models/master/models/b773.glb';
+          correctionQuat = Cesium.Quaternion.fromAxisAngle(Cesium.Cartesian3.UNIT_Z, Cesium.Math.toRadians(-180));
+        } else if (/B778/i.test(foundModel || "")) {
+          modelUri = 'https://raw.githubusercontent.com/Flightradar24/fr24-3d-models/master/models/b778.glb';
+          correctionQuat = Cesium.Quaternion.fromAxisAngle(Cesium.Cartesian3.UNIT_Z, Cesium.Math.toRadians(-180));
+        } else if (/B779/i.test(foundModel || "")) {
+          modelUri = 'https://raw.githubusercontent.com/Flightradar24/fr24-3d-models/master/models/b779.glb';
+          correctionQuat = Cesium.Quaternion.fromAxisAngle(Cesium.Cartesian3.UNIT_Z, Cesium.Math.toRadians(-180));
+        }
+
+        // Boeing 787 Family (Overrides generic check if present)
+        if (/B788/i.test(foundModel || "")) {
+          modelUri = 'https://raw.githubusercontent.com/Ysurac/FlightAirMap-3dmodels/master/b788/glTF2/B788.glb';
+        } else if (/B789|B78X/i.test(foundModel || "")) {
+          modelUri = 'https://raw.githubusercontent.com/Flightradar24/fr24-3d-models/master/models/b789.glb';
+          correctionQuat = Cesium.Quaternion.fromAxisAngle(Cesium.Cartesian3.UNIT_Z, Cesium.Math.toRadians(-180));
+        }
+
         // Convert flight points format to expected format if needed
         let processedData = flight.points;
         if (processedData[0] && processedData[0].lat !== undefined) {
@@ -3202,24 +3297,58 @@
             if (roll < -maxBank) roll = -maxBank;
             roll = Cesium.Math.toRadians(roll);
 
-            const currentAlt = (row.Altitude || 0);
-            const nextAlt = (nextRow.Altitude || 0);
-            const altDiff = nextAlt - currentAlt;
-            const maxPitch = 15;
-            pitch = altDiff * 0.1;
-            if (pitch > maxPitch) pitch = maxPitch;
-            if (pitch < -maxPitch) pitch = -maxPitch;
-            pitch = Cesium.Math.toRadians(pitch);
+            if (useGeometricPitch) {
+              const [lat1, lon1] = row.Position.split(',').map(Number);
+              const [lat2, lon2] = nextRow.Position.split(',').map(Number);
+              const p1 = Cesium.Cartesian3.fromDegrees(lon1, lat1);
+              const p2 = Cesium.Cartesian3.fromDegrees(lon2, lat2);
+              const hDist = Cesium.Cartesian3.distance(p1, p2);
+
+              let alt1, alt2;
+              if (row.ClampedAltitudeMeters !== undefined) alt1 = row.ClampedAltitudeMeters;
+              else alt1 = (row.Altitude || 0) * 0.3048;
+              if (nextRow.ClampedAltitudeMeters !== undefined) alt2 = nextRow.ClampedAltitudeMeters;
+              else alt2 = (nextRow.Altitude || 0) * 0.3048;
+
+              const vDist = alt2 - alt1;
+              if (hDist > 0.1) pitch = Math.atan2(vDist, hDist);
+              else pitch = 0;
+
+              let pitchDeg = Cesium.Math.toDegrees(pitch);
+              if (pitchDeg > maxPitch) pitchDeg = maxPitch;
+              if (pitchDeg < -maxPitch) pitchDeg = -maxPitch;
+              pitch = Cesium.Math.toRadians(pitchDeg);
+            } else {
+              const currentAlt = (row.Altitude || 0);
+              const nextAlt = (nextRow.Altitude || 0);
+              const altDiff = nextAlt - currentAlt;
+              pitch = altDiff * pitchSensitivity;
+              if (pitch > maxPitch) pitch = maxPitch;
+              if (pitch < -maxPitch) pitch = -maxPitch;
+              pitch = Cesium.Math.toRadians(pitch);
+            }
           }
 
           const altitudeFeet = row.Altitude || 0;
-          if (altitudeFeet <= 30) {
+
+          // Zero Pitch/Roll at low altitude for non-geometric aircraft
+          if (!useGeometricPitch && altitudeFeet <= 30) {
             pitch = 0;
             roll = 0;
           }
 
-          const hpr = new Cesium.HeadingPitchRoll(heading - Cesium.Math.PI_OVER_TWO, pitch, roll);
-          const orientation = Cesium.Transforms.headingPitchRollQuaternion(position, hpr);
+          // Force Roll to 0 on the ground (approx 0ft) for everyone
+          if (altitudeFeet <= 2) {
+            roll = 0;
+          }
+
+          const hpr = new Cesium.HeadingPitchRoll(heading + baseHeadingOffset, pitch, roll);
+          let orientation = Cesium.Transforms.headingPitchRollQuaternion(position, hpr);
+
+          if (correctionQuat) {
+            Cesium.Quaternion.multiply(orientation, correctionQuat, orientation);
+          }
+
           orientationProperty.addSample(time, orientation);
         });
 
@@ -3228,10 +3357,17 @@
           position: positionProperty,
           orientation: orientationProperty,
           model: {
-            uri: 'https://raw.githubusercontent.com/Ysurac/FlightAirMap-3dmodels/master/pa28/glTF2/PA28.glb',
+            uri: modelUri,
             minimumPixelSize: 0,
             maximumScale: 100,
             runAnimations: true
+          },
+          path: {
+            resolution: 1,
+            material: new Cesium.PolylineGlowMaterialProperty({
+              glowPower: 0.1,
+              color: Cesium.Color.YELLOW
+            }),
           },
           path: {
             resolution: 1,
@@ -3639,14 +3775,14 @@
         if (name === "VFR Sectional") {
           if (map.hasLayer(baseLayers[name])) {
             map.removeLayer(baseLayers[name]);
-            // Remove active class
-            document.querySelectorAll('.layer-option').forEach(btn => {
+            // Remove active class (scoped to 2D modal)
+            document.querySelectorAll('#layerModal .layer-option').forEach(btn => {
               if (btn.textContent === name) btn.classList.remove('active');
             });
           } else {
             map.addLayer(baseLayers[name]);
-            // Add active class
-            document.querySelectorAll('.layer-option').forEach(btn => {
+            // Add active class (scoped to 2D modal)
+            document.querySelectorAll('#layerModal .layer-option').forEach(btn => {
               if (btn.textContent === name) btn.classList.add('active');
             });
           }
@@ -3675,8 +3811,8 @@
         }
         currentLayerName = name;
 
-        // Update UI active state for Base Layers Only
-        document.querySelectorAll('.layer-option').forEach(btn => {
+        // Update UI active state for Base Layers Only (scoped to 2D modal)
+        document.querySelectorAll('#layerModal .layer-option').forEach(btn => {
           if (btn.textContent !== "VFR Sectional") {
             if (btn.textContent === name) {
               btn.classList.add('active');
@@ -3712,8 +3848,44 @@
         }
       });
 
+      let cesiumVfrLayer = null; // Track 3D overlay layer
+
       window.switch3DBaseLayer = function (name) {
-        if (!viewer || current3DLayerName === name) {
+        if (!viewer) {
+          layer3DModal.style.display = 'none';
+          return;
+        }
+
+        // Toggle Logic for VFR Sectional in 3D
+        if (name === "VFR Sectional") {
+          if (cesiumVfrLayer && viewer.imageryLayers.contains(cesiumVfrLayer)) {
+            viewer.imageryLayers.remove(cesiumVfrLayer);
+            cesiumVfrLayer = null;
+            // Remove active class
+            document.querySelectorAll('#layer3DModal .layer-option').forEach(btn => {
+              if (btn.textContent === name) btn.classList.remove('active');
+            });
+          } else {
+            // Add VFR Layer
+            const vfrProvider = new Cesium.UrlTemplateImageryProvider({
+              url: 'https://tiles.arcgis.com/tiles/ssFJjBXIUyZDrSYZ/arcgis/rest/services/VFR_Sectional/MapServer/tile/{z}/{y}/{x}',
+              minimumLevel: 6,
+              maximumLevel: 11
+            });
+            cesiumVfrLayer = viewer.imageryLayers.addImageryProvider(vfrProvider);
+            cesiumVfrLayer.alpha = 1.0; // Fully opaque as requested
+
+            // Add active class
+            document.querySelectorAll('#layer3DModal .layer-option').forEach(btn => {
+              if (btn.textContent === name) btn.classList.add('active');
+            });
+          }
+          // Do NOT close modal for overlays
+          return;
+        }
+
+        // Standard 3D Base Layer Logic
+        if (current3DLayerName === name) {
           layer3DModal.style.display = 'none';
           return;
         }
@@ -3734,14 +3906,21 @@
           current3DLayerName = name;
         }
 
-        // Update UI active state
+        // Update UI active state for Base Layers
         document.querySelectorAll('#layer3DModal .layer-option').forEach(btn => {
-          if (btn.textContent === name) {
-            btn.classList.add('active');
-          } else {
-            btn.classList.remove('active');
+          if (btn.textContent !== "VFR Sectional") {
+            if (btn.textContent === name) {
+              btn.classList.add('active');
+            } else {
+              btn.classList.remove('active');
+            }
           }
         });
+
+        // Ensure VFR stays on top if active
+        if (cesiumVfrLayer && viewer.imageryLayers.contains(cesiumVfrLayer)) {
+          viewer.imageryLayers.raiseToTop(cesiumVfrLayer);
+        }
 
         // Close modal
         layer3DModal.style.display = 'none';
